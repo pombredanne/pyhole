@@ -1,4 +1,4 @@
-#   Copyright 2011-2012 Josh Kearney
+#   Copyright 2011-2016 Josh Kearney
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -16,60 +16,69 @@
 
 from BeautifulSoup import BeautifulSoup
 
-from pyhole.core import plugin, utils
+from pyhole.core import plugin
+from pyhole.core import request
+from pyhole.core import utils
 
 
 class Url(plugin.Plugin):
-    """Provide access to URL data"""
+    """Provide access to URL data."""
 
-    def __init__(self, irc):
-        self.irc = irc
+    def __init__(self, session):
+        self.session = session
         self.name = self.__class__.__name__
         self.url = None
 
     @plugin.hook_add_command("title")
-    @utils.spawn
     def title(self, message, params=None, **kwargs):
-        """Display the title of the a URL (ex: .title <url>)"""
+        """Display the title of the a URL (ex: .title [<url>])"""
         if params:
-            self._find_title(message, params.split(" ", 1)[0])
-        else:
-            if self.url:
-                self._find_title(message, self.url)
+            self.url = params.split(" ", 1)[0]
 
-    @plugin.hook_add_msg_regex("https?:\/\/|www\.")
-    def _watch_for_url(self, message, params=None, **kwargs):
-        """Watch and keep track of the latest URL"""
+        if not _matches_host(self.url):
+            self._find_title(message, self.url)
+
+    @plugin.hook_add_msg_regex("(https?://|www.)[^\> ]+")
+    def regex_match_url(self, message, match, **kwargs):
+        """Watch and keep track of the latest URL."""
         try:
-            self.url = message.message.split(" ", 1)[0]
-            host = self.url[7:]
+            # NOTE(jk0): Slack does some weird things with URLs.
+            self.url = match.group(0).split("|", 1)[0]
 
-            lookup_sites = ("open.spotify.com", "/open.spotify.com",
-                            "www.youtube.com", "/www.youtube.com")
-
-            if host.startswith(lookup_sites):
+            if _matches_host(self.url):
                 self._find_title(message, self.url)
         except TypeError:
             return
 
+    @utils.spawn
     def _find_title(self, message, url):
-        """Find the title of a given URL"""
+        """Find the title of a given URL."""
+        # NOTE(jk0): Slack does some weird things with URLs.
+        url = url.replace("<", "").replace(">", "").split("|")[0]
         if not url.startswith(("http://", "https://")):
             url = "http://" + url
 
-        response = self.irc.fetch_url(url, self.name)
-        if not response:
+        try:
+            response = request.get(url)
+        except Exception:
             return
 
-        soup = BeautifulSoup(response.read())
+        soup = BeautifulSoup(response.content)
         if soup.head:
             title = utils.decode_entities(soup.head.title.string)
-            content_type = response.headers.get("Content-Type").split(";",
-                                                                      1)[0]
-            content_size = response.headers.get("Content-Length")
-            content_size = content_size + " bytes" if content_size else "N/A"
-
-            message.dispatch("%s (%s, %s)" % (title, content_type,
-                             content_size))
+            content_type = response.headers.get("Content-Type")
+            message.dispatch("%s (%s)" % (title, content_type))
         else:
-            message.dispatch("No title found for %s" % url)
+            message.dispatch("No title found: %s" % url)
+
+
+def _matches_host(url):
+    """Watch for certain websites."""
+    try:
+        host = url.split("/")[2]
+    except IndexError:
+        host = url
+
+    lookup_sites = ("open.spotify.com", "www.youtube.com", "youtu.be")
+    if host.startswith(lookup_sites):
+        return True

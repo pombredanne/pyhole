@@ -1,6 +1,0 @@
-BeautifulSoup==3.2.0
-Eventlet
-irc
-launchpadlib
-pywunderground
-requests

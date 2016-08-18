@@ -1,4 +1,4 @@
-#   Copyright 2011 Josh Kearney
+#   Copyright 2011-2016 Josh Kearney
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -12,45 +12,46 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from pip.req import parse_requirements
-from setuptools import setup
+import setuptools
 
 from pyhole.core import version
 
-import uuid
 
-
-def requirements():
-    install_reqs = parse_requirements("requirements.txt", session=uuid.uuid1())
-    return [str(ir.req) for ir in install_reqs]
-
-
-setup(
+setuptools.setup(
     name="irc-pyhole",
-    version=version.version_hash(),
+    version=version.version(),
     author="Josh Kearney",
     author_email="josh@jk0.org",
-    description="A modular IRC bot for Python developers.",
-    license="Apache License, Version 2.0",
-    url="http://pyhole.org",
-    packages=[
-        "pyhole",
-        "pyhole.core",
-        "pyhole.core.colormaps",
-        "pyhole.core.irc",
-        "pyhole.plugins"
-    ],
-    install_requires=requirements(),
+    description="A modular IRC & Slack bot.",
+    url="https://github.com/jk0/pyhole",
+    zip_safe=True,
     classifiers=[
-        "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
         "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
-        "Programming Language :: Python",
+        "Programming Language :: Python"
     ],
+    install_requires=[
+        "BeautifulSoup==3.2.0",
+        "flask",
+        "irc",
+        "launchpadlib",
+        "pywunderground",
+        "requests",
+        "slackclient",
+        "yahoo-finance"
+    ],
+    setup_requires=[
+        "flake8",
+        "sphinx"
+    ],
+    test_suite="pyhole.tests",
+    packages=setuptools.find_packages(),
     entry_points={
-        "console_scripts": ["pyhole = pyhole:Main"]
-    },
-    setup_requires=['nose>=1.3.0']
+        "console_scripts": [
+            "pyhole = pyhole.main:Main"
+        ]
+    }
 )

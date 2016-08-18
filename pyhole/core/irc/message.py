@@ -15,15 +15,11 @@
 """Pyhole Message"""
 
 import irc.client as irclib
-from irc import connection
-
-from .. import log
 
 
 class Message(object):
-    def __init__(self, irc, message):
-        self.log = log.get_logger()
-        self.irc = irc
+    def __init__(self, session, message):
+        self.session = session
         self.message = message
 
     @property
@@ -35,12 +31,12 @@ class Message(object):
         self._message = _message
 
     @property
-    def irc(self):
-        return self._irc
+    def session(self):
+        return self._session
 
-    @irc.setter
-    def irc(self, _irc):
-        self._irc = _irc
+    @session.setter
+    def session(self, _session):
+        self._session = _session
 
     def _mangle_msg(self, msg):
         """Prepare the message for sending."""
@@ -48,7 +44,7 @@ class Message(object):
             try:
                 msg = str(msg)
             except Exception:
-                self.log.error("msg cannot be converted to string")
+                self.session.log.error("msg cannot be converted to string")
                 return
 
         msg = msg.split("\n")
@@ -60,7 +56,7 @@ class Message(object):
         return msg
 
     def dispatch(self, reply):
-        self.log.error("Message Dispatcher is not implemented")
+        raise NotImplementedError("Message Dispatcher is not implemented")
 
     @staticmethod
     def getMessage(**kwargs):
@@ -68,25 +64,26 @@ class Message(object):
 
 
 class Notice(Message):
-    def __init__(self, irc, message, target):
-        super(Notice, self).__init__(irc, message)
+    def __init__(self, session, message, target):
+        super(Notice, self).__init__(session, message)
         self.target = target
 
     def dispatch(self, reply):
         """Dispatch message as notice."""
         _reply = self._mangle_msg(reply)
         for line in _reply:
-            self.irc.notice(self.target, line)
+            self.session.notice(self.target, line)
             if irclib.is_channel(self.target):
-                self.log.info("-%s- <%s> %s" % (self.target, self.irc.nick,
-                              line))
+                self.session.log.info("-%s- <%s> %s" % (self.target,
+                                                        self.session.nick,
+                                                        line))
             else:
-                self.log.info("<%s> %s" % (self.irc.nick, line))
+                self.session.log.info("<%s> %s" % (self.session.nick, line))
 
 
 class Reply(Message):
-    def __init__(self, irc, message, source, target):
-        super(Reply, self).__init__(irc, message)
+    def __init__(self, session, message, source, target):
+        super(Reply, self).__init__(session, message)
         self.source = source
         self.target = target
 
@@ -94,15 +91,18 @@ class Reply(Message):
         """dispatch message as a reply."""
         _reply = self._mangle_msg(reply)
         for line in _reply:
-            if self.irc.addressed:
+            if self.session.addressed:
                 source = self.source.split("!")[0]
-                self.irc.privmsg(self.target, "%s: %s" % (source, line))
-                self.log.info("-%s- <%s> %s: %s" % (self.target, self.irc.nick,
-                              source, line))
+                self.session.reply(self.target, "%s: %s" % (source, line))
+                self.session.log.info("-%s- <%s> %s: %s" % (self.target,
+                                                            self.session.nick,
+                                                            source, line))
             else:
-                self.irc.privmsg(self.target, line)
+                self.session.reply(self.target, line)
                 if irclib.is_channel(self.target):
-                    self.log.info("-%s- <%s> %s" % (self.target, self.irc.nick,
-                                  line))
+                    self.session.log.info("-%s- <%s> %s" % (self.target,
+                                                            self.session.nick,
+                                                            line))
                 else:
-                    self.log.info("<%s> %s" % (self.irc.nick, line))
+                    self.session.log.info("<%s> %s" % (self.session.nick,
+                                                       line))

@@ -1,4 +1,4 @@
-#   Copyright 2010-2011 Josh Kearney
+#   Copyright 2010-2016 Josh Kearney
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -14,182 +14,58 @@
 
 """Pyhole Search Plugin"""
 
-try:
-    import json
-except ImportError:
-    import simplejson as json
-
-import re
-import urllib
-
 from BeautifulSoup import BeautifulSoup
-from xml.dom import minidom
 
-from pyhole.core import plugin, utils
+from pyhole.core import plugin
+from pyhole.core import request
+from pyhole.core import utils
 
 
 class Search(plugin.Plugin):
-    """Provide access to search engines"""
-
-    @plugin.hook_add_command("google")
-    @utils.spawn
-    def google(self, message, params=None, **kwargs):
-        """Search Google (ex: .g <query>)"""
-        if params:
-            query = urllib.urlencode({"q": params})
-            url = ("http://ajax.googleapis.com/ajax/"
-                   "services/search/web?v=1.0&%s" % query)
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
-
-            json_obj = json.loads(response.read())
-            results = json_obj["responseData"]["results"]
-            if results:
-                for r in results:
-                    message.dispatch("%s: %s" % (
-                                     r["titleNoFormatting"]
-                                     .encode("ascii", "ignore"),
-                                     r["unescapedUrl"]))
-            else:
-                message.dispatch("No results found: '%s'" % params)
-        else:
-            message.dispatch(self.google.__doc__)
-
-    @plugin.hook_add_command("g")
-    def alias_g(self, message, params=None, **kwargs):
-        """Alias of google"""
-        self.google(params, **kwargs)
-
-    @plugin.hook_add_command("imdb")
-    @utils.spawn
-    def imdb(self, message, params=None, **kwargs):
-        """Search IMDb (ex: .imdb <query>)"""
-        if params:
-            query = urllib.urlencode({"q": params})
-            url = "http://www.imdb.com/find?s=all&%s" % query
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
-
-            soup = BeautifulSoup(response.read())
-            results = soup.findAll("td", {"valign": "top"})
-
-            i = 0
-            for result in results:
-                if len(result) > 3 and len(result.contents[2].attrs) > 0:
-                    id = result.contents[2].attrs[0][1]
-                    title = utils.decode_entities(result.contents[2]
-                                                  .contents[0])
-                    year = result.contents[2].nextSibling.strip()[0:6]
-
-                    if not title.startswith("aka") and len(year):
-                        message.dispatch("%s %s: http://www.imdb.com%s" % (
-                                         title, year, id))
-                        i += 1
-                elif i >= 4:
-                    break
-
-            if i == 0:
-                message.dispatch("No results found: '%s'" % params)
-        else:
-            message.dispatch(self.imdb.__doc__)
-
-    @plugin.hook_add_command("twitter")
-    @utils.spawn
-    def twitter(self, message, params=None, **kwargs):
-        """Search Twitter (ex: .twitter <query>)"""
-        if params:
-            query = urllib.urlencode({"q": params, "rpp": 4})
-            url = "http://search.twitter.com/search.json?%s" % query
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
-
-            json_obj = json.loads(response.read())
-            results = json_obj["results"]
-            if results:
-                for r in results:
-                    message.dispatch("@%s: %s" % (r["from_user"],
-                                     utils.decode_entities(
-                                     r["text"].encode("ascii", "ignore"))))
-
-            else:
-                message.dispatch("No results found: '%s'" % params)
-        else:
-            message.dispatch(self.twitter.__doc__)
+    """Provide access to search engines."""
 
     @plugin.hook_add_command("urban")
+    @utils.require_params
     @utils.spawn
     def urban(self, message, params=None, **kwargs):
-        """Search Urban Dictionary (ex: .urban <query>)"""
-        if params:
-            query = urllib.urlencode({"term": params})
-            url = "http://www.urbandictionary.com/define.php?%s" % query
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
+        """Search Urban Dictionary (ex: .urban <query>)."""
+        url = "http://www.urbandictionary.com/define.php"
+        response = request.get(url, params={"term": params})
+        if response.status_code != 200:
+            return
 
-            soup = BeautifulSoup(response.read())
-            results = soup.findAll("div", {"class": "definition"})
+        soup = BeautifulSoup(response.content)
 
-            urban = ""
-            if len(results):
-                urban = " ".join(str(x) for x in soup.findAll(
-                    "div", {"class": "definition"})[0].contents)
+        try:
+            meaning = soup.find("div", {"class": "meaning"}).text
+            example = soup.find("div", {"class": "example"}).text
+        except AttributeError:
+            message.dispatch("No results found: '%s'" % params)
 
-            if len(urban) > 0:
-                for i, line in enumerate(urban.split("<br/>")):
-                    if i <= 4:
-                        message.dispatch(utils.decode_entities(line))
-                    else:
-                        message.dispatch("[...] %s" % url)
-                        break
-            else:
-                message.dispatch("No results found: '%s'" % params)
-        else:
-            message.dispatch(self.urban.__doc__)
+        meaning = utils.decode_entities(meaning)
+        example = utils.decode_entities(example)
+
+        message.dispatch("%s (ex: %s)" % (meaning, example))
 
     @plugin.hook_add_command("wikipedia")
+    @utils.require_params
     @utils.spawn
     def wikipedia(self, message, params=None, **kwargs):
-        """Search Wikipedia (ex: .wikipedia <query>)"""
-        if params:
-            query = urllib.urlencode({"action": "query",
-                                      "generator": "allpages", "gaplimit": 4,
-                                      "gapfrom": params, "format": "xml"})
-            url = "http://en.wikipedia.org/w/api.php?%s" % query
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
+        """Search Wikipedia (ex: .wikipedia <query>)."""
+        url = "https://en.wikipedia.org/w/api.php"
+        response = request.get(url, params={
+            "action": "query",
+            "generator": "allpages",
+            "gaplimit": 4,
+            "gapfrom": params,
+            "format": "json"
+        })
 
-            xml = minidom.parseString(response.read())
-            for i in xml.childNodes[0].childNodes[1].childNodes[0].childNodes:
-                title = i._attrs["title"].firstChild.data
-                title = re.sub(" ", "_", title)
-                message.dispatch("http://en.wikipedia.org/wiki/%s" % title)
-        else:
-            message.dispatch(self.wikipedia.__doc__)
+        if response.status_code != 200:
+            return
 
-    @plugin.hook_add_command("youtube")
-    @utils.spawn
-    def youtube(self, message, params=None, **kwargs):
-        """Search YouTube (ex: .youtube <query>)"""
-        if params:
-            query = urllib.urlencode({"q": params, "v": 2, "max-results": 4,
-                                      "alt": "jsonc"})
-            url = "http://gdata.youtube.com/feeds/api/videos?%s" % query
-            response = self.irc.fetch_url(url, self.name)
-            if not response:
-                return
-
-            json_obj = json.loads(response.read())
-            results = json_obj["data"]
-            if len(results) > 4:
-                for r in results["items"]:
-                    v = r["player"]["default"].split("&", 1)[0]
-                    message.dispatch("%s: %s" % (r["title"], v))
-            else:
-                message.dispatch("No results found: '%s'" % params)
-        else:
-            message.dispatch(self.youtube.__doc__)
+        pages = response.json()["query"]["pages"]
+        for page in pages.values():
+            title = page["title"]
+            title = title.replace(" ", "_")
+            message.dispatch("http://en.wikipedia.org/wiki/%s" % title)

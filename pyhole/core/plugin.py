@@ -1,4 +1,4 @@
-#   Copyright 2011-2012 Chris Behrens
+#   Copyright 2011-2015 Chris Behrens
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -12,18 +12,19 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-"""Pyhole Plugin Library"""
+"""Pyhole Plugin Manager"""
 
 import functools
 import os
+import re
 import sys
 import time
 
-import log
+import logger
 import utils
 
 
-LOG = log.get_logger()
+LOG = logger.get_logger()
 
 _plugin_instances = []
 _plugin_hooks = {}
@@ -83,7 +84,7 @@ def active_get(hookname):
     generated calls 'active_get_*' that are created below with the
     setattrs
     """
-    return [x[2] for x in _plugin_hooks[hookname]]
+    return ", ".join(sorted([x[2] for x in _plugin_hooks[hookname]]))
 
 
 _hook_names = ["keyword", "command", "msg_regex", "poll"]
@@ -120,9 +121,9 @@ class Plugin(object):
     """The class that all plugin classes should inherit from"""
     __metaclass__ = PluginMetaClass
 
-    def __init__(self, irc, *args, **kwargs):
-        """Default constructor for Plugin.  Stores the IRC instance, etc"""
-        self.irc = irc
+    def __init__(self, session, *args, **kwargs):
+        """Default constructor for Plugin. Stores the client instance, etc"""
+        self.session = session
         self.name = self.__class__.__name__
 
 
@@ -176,7 +177,7 @@ def load_plugins(*args, **kwargs):
         try:
             __import__("pyhole.plugins", globals(), locals(), [plugin_name])
         except Exception, exc:
-            LOG.error(exc)
+            LOG.exception(exc)
 
     _init_plugins(*args, **kwargs)
 
@@ -193,7 +194,7 @@ def reload_plugins(*args, **kwargs):
                 # TODO(jk0): Doing this kills the entire process. We need to
                 # figure out how to kill it properly. Until this is done,
                 # reloading will not work with polls.
-                #attr().throw(KeyboardInterrupt)
+                # attr().throw(KeyboardInterrupt)
                 pass
 
     # When the modules are reloaded, the meta class will append
@@ -208,8 +209,6 @@ def reload_plugins(*args, **kwargs):
 
     # Reload existing plugins
     for mod, val in sys.modules.items():
-        l_plugin_path = os.path.join(local_plugin_dir, mod)
-
         if plugindir in mod and val and mod != plugindir:
             mod_file = val.__file__
             if not os.path.isfile(mod_file):
@@ -233,9 +232,97 @@ def reload_plugins(*args, **kwargs):
 
 def active_plugins():
     """Get the loaded plugin names"""
-    return [x.__name__ for x in Plugin._plugin_classes]
+    return ", ".join(sorted([x.__name__ for x in Plugin._plugin_classes]))
 
 
 def active_plugin_classes():
     """Get the loaded plugin classes"""
     return Plugin._plugin_classes
+
+
+def run_hook_command(session, mod_name, func, message, arg, **kwargs):
+    """Make a call to a plugin hook."""
+    try:
+        if arg:
+            session.log.debug("Calling: %s.%s(\"%s\")" % (mod_name,
+                              func.__name__, arg))
+        else:
+            session.log.debug("Calling: %s.%s(None)" % (mod_name,
+                              func.__name__))
+        func(message, arg, **kwargs)
+    except Exception, exc:
+        session.log.exception(exc)
+
+
+def run_hook_polls(session):
+    """Run polls in the background."""
+    message = None
+    for mod_name, func, cmd in hook_get_polls():
+        run_hook_command(session, mod_name, func, message, cmd)
+
+
+def run_msg_regexp_hooks(session, message, private):
+    """Run regexp hooks."""
+    msg = message.message
+    for mod_name, func, msg_regex in hook_get_msg_regexs():
+        match = re.search(msg_regex, msg, re.I)
+        if match:
+            run_hook_command(session, mod_name, func, message, match,
+                             private=private)
+
+
+def run_keyword_hooks(session, message, private):
+    """Run keyword hooks."""
+    msg = message.message
+    words = msg.split(" ")
+    for mod_name, func, kwarg in hook_get_keywords():
+        for word in words:
+            match = re.search("^%s(.+)" % kwarg, word, re.I)
+            if match:
+                run_hook_command(session, mod_name, func, message,
+                                 match.group(1), private=private)
+
+
+def run_command_hooks(session, message, private):
+    """Run command hooks."""
+    msg = message.message
+    for mod_name, func, cmd in hook_get_commands():
+        session.addressed = False
+
+        if private:
+            match = re.search("^%s$|^%s\s(.*)$" % (cmd, cmd), msg,
+                              re.I)
+            if match:
+                run_hook_command(session, mod_name, func, message,
+                                 match.group(1), private=private,
+                                 addressed=session.addressed)
+
+        if msg.startswith(session.command_prefix):
+            # Strip off command prefix
+            msg_rest = msg[len(session.command_prefix):]
+        else:
+            # Check for command starting with nick being addressed
+            msg_start_upper = msg[:len(session.nick) + 1].upper()
+            if msg_start_upper == session.nick.upper() + ":":
+                # Get rest of string after "nick:" and white spaces
+                msg_rest = re.sub("^\s+", "",
+                                  msg[len(session.nick) + 1:])
+            else:
+                continue
+
+            session.addressed = True
+
+        match = re.search("^%s$|^%s\s(.*)$" % (cmd, cmd), msg_rest, re.I)
+        if match:
+            run_hook_command(session, mod_name, func, message, match.group(1),
+                             private=private,
+                             addressed=session.addressed)
+
+
+def poll_messages(session, message, private=False):
+    """Watch for known commands."""
+    session.addressed = False
+
+    run_command_hooks(session, message, private)
+    run_keyword_hooks(session, message, private)
+    run_msg_regexp_hooks(session, message, private)

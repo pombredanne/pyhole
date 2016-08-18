@@ -1,4 +1,4 @@
-#   Copyright 2013-2015 Philip Schwartz
+#   Copyright 2015 Josh Kearney
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.

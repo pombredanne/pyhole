@@ -12,9 +12,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-"""Pyhole Configuration Library"""
-
-from __future__ import with_statement
+"""Pyhole Configuration Manager"""
 
 import ConfigParser
 import os
@@ -36,7 +34,7 @@ class Config(object):
                 self.config_parser.readfp(conf_file)
         except IOError:
             print "Unable to load configuration file: %s" % self.config
-            utils.generate_config()
+            utils.prepare_config()
             sys.exit(1)
 
     def __str__(self):
